@@ -5,7 +5,6 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <esp_timer.h>
-#include <Arduino.h>
 
 //******************** Macros ********************//
 // Controle de tempo
@@ -18,24 +17,24 @@
 
 // Filtros
 #define FACTORADC 0.01
-#define KP 64.00
-#define KI 0.0001
+#define KP 128.00
+#define KI 0.01
 
 // Pinos
-#define A1 34         // Entrada analógica para o NTC 1 = 36
-#define A2 34         // Entrada analógica para o NTC 2 = 39
-#define A3 34         // Entrada analógica para o NTC 3 = 34
-#define A4 36         // Entrada analógica para o NTC 4 = 35
-#define A5 36         // Entrada analógica para o NTC 5 = 32
-#define A6 36         // Entrada analógica para o NTC 6 = 33
+#define A1 36         // Entrada analógica para o NTC 1 = 36
+#define A2 36         // Entrada analógica para o NTC 2 = 39
+#define A3 39         // Entrada analógica para o NTC 3 = 34
+#define A4 34         // Entrada analógica para o NTC 4 = 35
+#define A5 32         // Entrada analógica para o NTC 5 = 32
+#define A6 33         // Entrada analógica para o NTC 6 = 33
 #define RPM 13        // Entrada de RPM Coller
-#define PWM_A 19      // Saída lado A 13
+#define PWM_A 19      // Saída lado A 19
 #define PWM_B 4      // Saída lado B 17
 #define Sel_A 18      // Saída Q/F A 18
 #define Sel_B 16      // Saída Q/F B 16
-#define Pump_A 17      // Saída Bomba A 4
-#define Pump_B 15     // Saída Bomba B 15
-#define LED 23        // Saída LED 
+#define Pump_A 15      // Saída Bomba A 4
+#define Pump_B 17     // Saída Bomba B 15
+#define LED 23        // Saída LED 23
 
 // Parâmetros NTC
 #define BETA 3950.0               //Beta do NTC
@@ -46,9 +45,7 @@
 //******************** Type deff enum ********************//
 enum SensorIndex {
   RET_A,
-  RET_B,
   OUT_A,
-  OUT_B,
   DISS,
   AMB,
   NUM_SENSORES
@@ -57,9 +54,7 @@ enum SensorIndex {
 enum Mode {
   OFF,
   AUTO,
-  SIDE_A,
-  SIDE_B,
-  ALL,
+  MANUAL,
   MODE
 };
 
@@ -76,16 +71,14 @@ WebServer server(80);
 TaskHandle_t webServerTaskHandle = NULL;
 
 // Pinos analógicos
-const int pinosADC[NUM_SENSORES] = {A1, A2, A3, A4, A5, A6};
+const int pinosADC[NUM_SENSORES] = {A1, A2, A3, A4};
 
 // Setpoints
 float setpointA = 24.0;
-float setpointB = 26.0;
 
 float filTemp[NUM_SENSORES] = {25.0};
 float temp[NUM_SENSORES]    = {25.0};
 float Ia = 0.00;
-float Ib = 0.00;
 
 uint16_t rpmVector[NLEITURAS] = {0};
 
@@ -102,12 +95,12 @@ uint16_t rpm = 0;
 uint16_t rpmMedia = 0;
 
 int16_t PIa = 0;
-int16_t PIb = 0;
+
+uint8_t Pump_A_val = 0;
+uint8_t Pump_B_val = 0;
 
 bool flagOutA = false;
-bool flagOutB = false;
 bool flagSensorA = false;
-bool flagSensorB = false;
 bool power = false;
 bool fanFlag = false;
 volatile bool pulseDetected = false;
@@ -203,57 +196,42 @@ void handleRoot() {
     </style>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script>
-      let setpointA = 0, setpointB = 0;
+      let setpointA = 0;
 
       function updatePage() {
         fetch('/data')
           .then(res => res.json())
           .then(data => {
             setpointA = data.setpointA;
-            setpointB = data.setpointB;
 
             document.getElementById('POWER').innerText = data.power ? 'On' : 'Off';
             document.getElementById('modeSelect').value = data.MODE;
             document.getElementById('setA').innerText = setpointA.toFixed(1);
-            document.getElementById('setB').innerText = setpointB.toFixed(1);
 
-            const labels = ['RET_A','RET_B','OUT_A','OUT_B','DISS','AMB'];
+            const labels = ['RET_A','OUT_A','DISS','AMB'];
             data.temps.forEach((t, i) => {
               document.getElementById(labels[i]).innerText = t.toFixed(1) + ' °C';
             });
 
-            const progressA = document.getElementById('progress_OUTPUT_A');
+            const progressA = document.getElementById('progress_Peltier');
             progressA.value = data.OUTPUT_A;
             progressA.className = data.SEL_A ? 'progress-red' : 'progress-blue';
-
-            const progressB = document.getElementById('progress_OUTPUT_B');
-            progressB.value = data.OUTPUT_B;
-            progressB.className = data.SEL_B ? 'progress-red' : 'progress-blue';
             
 
-            //document.getElementById('progress_OUTPUT_A').value = data.OUTPUT_A;
-            //document.getElementById('text_OUTPUT_A').innerText = data.OUTPUT_A.toFixed(1) + ' %';
-
-            //document.getElementById('progress_OUTPUT_B').value = data.OUTPUT_B;
-            //document.getElementById('text_OUTPUT_B').innerText = data.OUTPUT_B.toFixed(1) + ' %';
-
-            document.getElementById('PUMP_A').innerText = data.PUMP_A ? 'ON' : 'OFF';
-            document.getElementById('PUMP_B').innerText = data.PUMP_B ? 'ON' : 'OFF';
-            document.getElementById('PUMP_C').innerText = data.PUMP_C ? 'ON' : 'OFF';
+            document.getElementById('PUMP_A').innerText = data.PUMP_A + ' %';
+            document.getElementById('PUMP_B').innerText = data.PUMP_B + ' %';
             document.getElementById('COOLER').innerText = data.COOLER ? 'ON' : 'OFF';
           });
       }
 
-      function changeSetpoint(side, delta) {
-        if (side === 'A') setpointA += delta;
-        else setpointB += delta;
+      function changeSetpoint(delta) {
+        setpointA += delta;
         sendValues();
       }
 
       function sendValues(mode = null) {
         const form = new FormData();
         form.append('setpointA', setpointA);
-        form.append('setpointB', setpointB);
 
         if (mode !== null) {
           form.append('MODE', mode);
@@ -283,44 +261,31 @@ void handleRoot() {
       <select id="modeSelect" onchange="setMode()">
         <option value="OFF">OFF</option>
         <option value="AUTO">AUTO</option>
-        <option value="SIDE_A">SIDE_A</option>
-        <option value="SIDE_B">SIDE_B</option>
-        <option value="ALL">ALL</option>
+        <option value="MANUAL">MANUAL</option>
       </select>
     </div>
 
     <div>
-      Setpoint A:
-      <button onclick="changeSetpoint('A', -0.5)">-</button>
+      Setpoint:
+      <button onclick="changeSetpoint(-0.5)">-</button>
       <span id="setA">--</span>
-      <button onclick="changeSetpoint('A', 0.5)">+</button>
-    </div>
-
-    <div>
-      Setpoint B:
-      <button onclick="changeSetpoint('B', -0.5)">-</button>
-      <span id="setB">--</span>
-      <button onclick="changeSetpoint('B', 0.5)">+</button>
+      <button onclick="changeSetpoint(0.5)">+</button>
     </div>
 
     <h3>Temperaturas</h3>
     <ul>
-      <li>RET_A: <span id="RET_A">--</span></li>
-      <li>RET_B: <span id="RET_B">--</span></li>
-      <li>OUT_A: <span id="OUT_A">--</span></li>
-      <li>OUT_B: <span id="OUT_B">--</span></li>
-      <li>DISS: <span id="DISS">--</span></li>
-      <li>AMB: <span id="AMB">--</span></li>
+      <li>Retorno: <span id="RET_A">--</span></li>
+      <li>Saida: <span id="OUT_A">--</span></li>
+      <li>Dissipador: <span id="DISS">--</span></li>
+      <li>Ambiente: <span id="AMB">--</span></li>
     </ul>
 
     <h3>Saídas</h3>
     <ul>
-      <li>OUTPUT_A: <progress id="progress_OUTPUT_A" max="100" value="0" class="progress-blue"></progress></li>
-      <li>OUTPUT_B: <progress id="progress_OUTPUT_B" max="100" value="0" class="progress-blue"></progress></li>
-      <li>PUMP_A: <span id="PUMP_A">--</span></li>
-      <li>PUMP_B: <span id="PUMP_B">--</span></li>
-      <li>PUMP_C: <span id="PUMP_C">--</span></li>
-      <li>COOLER: <span id="COOLER">--</span></li>
+      <li>Peltier: <progress id="progress_Peltier" max="100" value="0" class="progress-blue"></progress></li>
+      <li>Bomba Cama: <span id="PUMP_A">--</span></li>
+      <li>Bomba Dissipador: <span id="PUMP_B">--</span></li>
+      <li>Cooler: <span id="COOLER">--</span></li>
     </ul>
   </body>
   </html>
@@ -330,10 +295,12 @@ void handleRoot() {
 }
 
 void handleData() {
+
+  //portENTER_CRITICAL(&mux);
+
   String json = "{";
   json += "\"MODE\":\"" + String(modeToString(currentMode)) + "\",";
   json += "\"setpointA\":" + String(setpointA, 1) + ",";
-  json += "\"setpointB\":" + String(setpointB, 1) + ",";
   json += "\"power\":" + String(power ? "true" : "false") + ",";
   json += "\"temps\":[";
 
@@ -345,16 +312,14 @@ void handleData() {
   json += "],";
 
   json += "\"OUTPUT_A\":" + String(PIa / 2.55);
-  json += ",\"OUTPUT_B\":" + String(PIb / 2.55);
   json += ",\"SEL_A\":" + String(digitalRead(Sel_A));
-  json += ",\"SEL_B\":" + String(digitalRead(Sel_B));
-  json += ",\"PUMP_A\":" + String(digitalRead(Pump_A));
-  json += ",\"PUMP_B\":" + String(digitalRead(Pump_B));
-  json += ",\"PUMP_C\":" + String(digitalRead(Pump_A));
-  json += ",\"COOLER\":" + String(digitalRead(Pump_B));
+  json += ",\"PUMP_A\":" + String(Pump_A_val / 2.55);
+  json += ",\"PUMP_B\":" + String(Pump_B_val / 2.55);
+  json += ",\"COOLER\":" + String(digitalRead(LED));
 
   json += "}";
 
+  //portEXIT_CRITICAL(&mux);
 
   server.send(200, "application/json", json);
 }
@@ -364,19 +329,13 @@ void handleSetValues() {
     String modeStr = server.arg("MODE");
     if      (modeStr == "OFF")      currentMode = OFF;
     else if (modeStr == "AUTO")     currentMode = AUTO;
-    else if (modeStr == "SIDE_A")   currentMode = SIDE_A;
-    else if (modeStr == "SIDE_B")   currentMode = SIDE_B;
-    else if (modeStr == "ALL")      currentMode = ALL;
+    else if (modeStr == "MANUAL")   currentMode = MANUAL;
   }
 
   if (server.hasArg("setpointA")) setpointA = server.arg("setpointA").toFloat();
-  if (server.hasArg("setpointB")) setpointB = server.arg("setpointB").toFloat();
   
   if (setpointA > 30) setpointA = 30.00;
   else if (setpointA < 16) setpointA = 16.00;
-
-  if (setpointB > 30) setpointB = 30.00;
-  else if (setpointB < 16) setpointB = 16.00;
 
   server.send(200, "text/plain", "OK");
 }
@@ -385,9 +344,7 @@ String modeToString(int mode) {
   switch (mode) {
     case 0: return "OFF";
     case 1: return "AUTO";
-    case 2: return "SIDE_A";
-    case 3: return "SIDE_B";
-    case 4: return "ALL";
+    case 2: return "MANUAL";
     default: return "UNKNOWN";
   }
 }
@@ -404,15 +361,14 @@ void setup() {
   Serial.begin(115200);
   pinMode(RPM, INPUT_PULLUP);
   pinMode(PWM_A, OUTPUT);
-  pinMode(PWM_B, OUTPUT);
   pinMode(Sel_A, OUTPUT);
-  pinMode(Sel_B, OUTPUT);
   pinMode(Pump_A, OUTPUT);
   pinMode(Pump_B, OUTPUT);
   pinMode(LED, OUTPUT);
 
-  ledcSetup(0, 20000, 8);  // Define a frequência
-  ledcAttachPin(PWM_A, 0);
+  ledcAttach(PWM_A, 25000, 8);
+  ledcAttach(Pump_A, 25000, 8);
+  ledcAttach(Pump_B, 25000, 8);
 
   digitalWrite(LED, HIGH);
   delay(500);
@@ -485,48 +441,24 @@ void checkMode() {
     // Desligado
     power = false;
     flagOutA = false;
-    flagOutB = false;
 
     break;
 
     case AUTO:
     // Ativacao automatica?
-    if (flagSensorA || flagSensorB) power = true;
-    else power = false;
-
+    power = true;
     if (flagSensorA) {
       flagOutA = true;
     }
-    else flagOutA = false;
-
-    if (flagSensorB) {
-      flagOutB = true;
+    else {
+      flagOutA = false;
     }
-    else flagOutB = false;
-    
     break;
 
-    case SIDE_A:
-    // Somente lado A operando
+    case MANUAL:
+    // Ativacao manual
     power = true;
     flagOutA = true;
-    flagOutB = false;
-
-    break;
-
-    case SIDE_B:
-    // Somente lado B operando
-    power = true;
-    flagOutA = false;
-    flagOutB = true;
-
-    break;
-
-    case ALL:
-    // Ambos os lados operando
-    power = true;
-    flagOutA = true;
-    flagOutB = true;
 
     break;
   }
@@ -552,88 +484,77 @@ void readADC() {
 }
 
 void outControl() {
-  // **************** Controle das Saidas Peltier ****************
-  int16_t Pa = (temp[RET_A] - setpointA) * KP;
-  int16_t Pb = (temp[RET_B] - setpointB) * KP;
+  // **************** Controle da Saida Peltier ****************
+  int16_t Pa = 0;
+  
+  if (flagOutA) Pa = (temp[RET_A] - setpointA) * KP;
+  else Pa = 0;
 
   Ia += Pa * KI;
-  Ib += Pb * KI;
 
   if (Ia > 255) Ia = 255.00;
   else if (Ia < -255) Ia = -255.00;
 
-  if (Ib > 255) Ib = 255.00;
-  else if (Ia < -255) Ia = -255.00;
-
   PIa = Pa + Ia;
-  PIb = Pb + Ib;
 
   if (PIa > 255) PIa = 255;
   else if (PIa < -255) PIa = -255;
 
-  if (PIb > 255) PIb = 255;
-  else if (PIb < -255) PIb = -255;
-
- // Controle da saída A
+ // Controle da saída
   if (flagOutA) {
     if (PIa < 0) {
       PIa = abs(PIa); // Converte valor negativo
       digitalWrite(Sel_A, HIGH); // Liga saida para aquecer
     }
     else digitalWrite(Sel_A, LOW);
-    analogWrite(PWM_A, PIa); // Liga saida peltier A
-    //if (PIa > 125) digitalWrite(PWM_A, HIGH);
-    //else digitalWrite(PWM_A, LOW);
+    
+    ledcWrite(PWM_A, PIa); // Liga saida peltier
   } 
-  else {  // Desliga saidas
-    analogWrite(PWM_A, 0);
-    //digitalWrite(PWM_A, LOW);
+  else {  // Desliga saida
+    ledcWrite(PWM_A, 0);
     digitalWrite(Sel_A, LOW);
+    PIa = 0;
   } 
 
-  // Controle da saída B
-  if (flagOutB) {
-    if (PIb < 0) {
-      PIb = abs(PIb); // Converte valor negativo
-      digitalWrite(Sel_B, HIGH); // Liga saida para aquecer
-    }
-    else digitalWrite(Sel_B, LOW);
-    analogWrite(PWM_B, PIb);  // Liga saida peltier B
-  }
-  else {  // Desliga saidas
-    analogWrite(PWM_B, 0);
-    digitalWrite(Sel_B, LOW);
-  } 
   // **************** Controle das Saidas das Bombas ****************
+  int8_t dif = (temp[DISS] / temp[AMB]) * 10; // logica para acionamento do cooler
+
   if (PIa >= 200) {
-    analogWrite(Pump_A, 255);
+    Pump_A_val = 255;
   }
   else if (PIa >= 50 && PIa < 200) {
-    analogWrite(Pump_A, 128);
+    Pump_A_val = 128;
   }
-  else if (PIa && PIa < 50) {
-    analogWrite(Pump_A, 100);
+  else {
+    Pump_A_val = 51;
+  } 
+
+  if (PIa >= 50) {
+    Pump_B_val = 255;
   }
-  else analogWrite(Pump_A, 0);
-
-
-  if (PIb || PIb < 200) {
-    analogWrite(Pump_B, 128);
+  else if (PIa >= 5 && PIa < 50) {
+    Pump_B_val = 127;
   }
-  else if (PIb >= 200) {
-    analogWrite(Pump_B, 255);
+  else {
+    if (dif >= 12 || dif <= 8) { //percentual de diferenca de temperatura entre dissipador e ambiente 8 e 12 = 20%
+      Pump_B_val = 127;
+    } 
+    else if (dif >= 11 || dif <= 9 || PIa) {
+      Pump_B_val = 60;
+    }
+    else Pump_B_val = 51;
   }
-  else analogWrite(Pump_B, 0);
 
-  
-  
-  int8_t dif = (temp[DISS] / temp[AMB]) * 10; // logica para acionamento do cooler de maneira digital
-  if (dif != 10) digitalWrite(LED, HIGH);
-  else digitalWrite(LED, LOW);
+  if (!power) {
+    Pump_A_val = 0;
+    Pump_B_val = 0;
+  }
 
+  ledcWrite(Pump_A, Pump_A_val);
+  ledcWrite(Pump_B, Pump_B_val);
 
   // **************** Controle Led Indicador ****************
-  if (state < 150 || fanFlag) digitalWrite(LED,HIGH);
+  if (state < 150 || fanFlag) digitalWrite(LED,LOW);
   else digitalWrite(LED, LOW);
 
   timerOut = MAXTIMEROUT;
@@ -684,8 +605,12 @@ void serialPrint() {
   Serial.println(rpmMedia);
   Serial.print("PIa: ");
   Serial.println(PIa);
-  Serial.print("PIb: ");
-  Serial.println(PIb);
+  Serial.print("Setpoint: ");
+  Serial.println(setpointA);
+  Serial.print("Power: ");
+  Serial.println(power);
+  Serial.print("Flag Out: ");
+  Serial.println(flagOutA);
 
 
   Serial.println();
