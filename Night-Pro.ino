@@ -54,7 +54,7 @@ enum Mode {
   MANUAL,
 };
 
-Mode currentMode = OFF;
+Mode currentMode = AUTO;
 
 
 //******************** Variáveis globais ********************//
@@ -70,7 +70,7 @@ TaskHandle_t webServerTaskHandle = NULL;
 const int pinosADC[NUM_SENSORES] = {A1, A2, A3, A4};
 
 // Setpoints
-float setpoint = 24.0;
+float setpoint = 23.0;
 
 float filTemp[NUM_SENSORES] = {25.0};
 float temp[NUM_SENSORES]    = {25.0};
@@ -529,7 +529,7 @@ void outControl() {
 
  // Controle da saída
   if (power) {
-    ledcWrite(PWM, PI); // Liga saida peltier
+    ledcWrite(PWM, PID); // Liga saida peltier
   } 
   else {  // Desliga saida
     ledcWrite(PWM, 0);
