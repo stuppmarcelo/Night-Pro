@@ -94,7 +94,7 @@ int16_t PID = 0;
 uint8_t Pump_A_val = 0;
 uint8_t Pump_B_val = 0;
 
-bool power = false;
+bool power = true;
 bool fanFlag = false;
 volatile bool pulseDetected = false;
 
@@ -195,6 +195,7 @@ void handleRoot() {
       let setpoint = 0;
       let PID = 0;
       let showPID = 0;
+      let modeNow = "AUTO";
 
       function updatePage() {
         fetch('/data')
@@ -202,9 +203,11 @@ void handleRoot() {
           .then(data => {
             setpoint = data.setpoint;
             PID = data.PID;
+            modeNow = data.MODE;
+
 
             document.getElementById('POWER').innerText = data.power ? 'On' : 'Off';
-            document.getElementById('modeSelect').value = data.MODE;
+            document.getElementById('modeSelect').value = modeNow;
             document.getElementById('setSetpoint').innerText = setpoint.toFixed(1);
             document.getElementById('setPID').innerText = showPID.toFixed(1);
 
@@ -220,7 +223,22 @@ void handleRoot() {
 
             document.getElementById('PUMP_A').innerText = data.PUMP_A + ' %';
             document.getElementById('PUMP_B').innerText = data.PUMP_B + ' %';
-            document.getElementById('COOLER').innerText = data.COOLER ? 'ON' : 'OFF';
+            document.getElementById('COOLER').innerText = data.COOLER ? 'Fail' : 'Running';
+
+            if (modeNow == "MANUAL") {
+              const setpointDiv = document.getElementById("setpointField");
+              const pidDiv = document.getElementById("pidField");
+
+              setpointDiv.style.display = "none";  // esconde setpoint
+              pidDiv.style.display = "block"; // mostra PID
+            } 
+            else {
+              const setpointDiv = document.getElementById("setpointField");
+              const pidDiv = document.getElementById("pidField");
+
+              setpointDiv.style.display = "block"; // mostra setpoint
+              pidDiv.style.display = "none";  // esconde PID
+            }
           });
       }
 
@@ -238,6 +256,9 @@ void handleRoot() {
 
         if (showPID > 100) showPID = 100;
         else if (showPID < 0) showPID = 0;
+
+        let diff = showPID / (PID / 2.6);
+        if (diff < 0.95 || diff > 1.05) showPID = (PID / 2.6);
 
         sendValues();
       }
@@ -258,18 +279,6 @@ void handleRoot() {
 
       function setMode() {
         const selectedMode = document.getElementById("modeSelect").value;
-        const setpointDiv = document.getElementById("setpointField");
-        const pidDiv = document.getElementById("pidField");
-
-        if (selectedMode === "MANUAL") {
-          setpointDiv.style.display = "none";  // esconde setpoint
-          pidDiv.style.display = "block"; // mostra PID
-        } 
-        else {
-          setpointDiv.style.display = "block"; // mostra setpoint
-          pidDiv.style.display = "none";  // esconde PID
-        }
-
         sendValues(selectedMode);
       }
 
